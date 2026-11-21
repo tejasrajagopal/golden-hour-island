@@ -5,26 +5,7 @@ Plain [three.js](https://threejs.org) r170 in a single `index.html` — no build
 
 **Interact:** hover (or tap) the moss to make flowers bloom · move over / tap the bottle to slosh the liquid · drag to orbit · scroll to zoom.
 
-**Film look panel** (top left, [DialKit](https://github.com/joshpuckett/dialkit)): pick a look (Dreamy, Golden Kodak, Faded Fuji, Pastel Haze, Clean) and tune every part of it live:
-
-- **Dream:** Pro-Mist diffusion, halation and its colour, bloom
-- **Grade:** temperature, tint, contrast, saturation, vibrance, shadows, highlights, matte fade, soft whites
-- **Split tone:** shadow and highlight colours with a balance control
-- **Lens:** chromatic aberration, vignette, bokeh size, atmospheric haze
-- **Film:** grain amount and size, flicker, gate weave, light leaks, letterbox (2.39:1 or 1.85:1)
-
-**Scene panel** (below it): change the world itself. Start from a sky (Golden hour, Cotton candy, Sunset blaze, Blue hour, Clear noon), then adjust:
-
-- **Sky:** top, middle and horizon colours, sun glow colour and strength, haze colour
-- **Moss & grass:** lightness and tint for the moss carpet and the grass blades
-- **Light:** sun colour and strength, fill light, ambient sky and ground colours
-- **Clouds:** lit, shaded and distant colours
-- **Earth:** lightness and tint of the soil and roots
-- **Bottle:** liquid colour
-
-**Reset scene** puts everything back to Golden hour.
-
-Both panels save your settings in the browser. **Save version** keeps snapshots to compare; **Copy parameters** copies the values; **Export .cube LUT** downloads the colour grade for Resolve, Premiere or After Effects.
+**Look:** a dreamy film look over a bright blue sky. Pro-Mist diffusion and halation, a soft grade with split toning, blue light leaks, film grain, flicker and gate weave, atmospheric haze, and lush moss and grass under cool blue light. All values live in `LOOK` and `SCENE` in `index.html`; `window.__dbg.look.cube()` exports the colour grade as a .cube LUT.
 
 ## Run locally
 
@@ -66,7 +47,6 @@ URL options: `?sky=hdri` shows the HDRI as the backdrop · `?glassdebug` shows t
 - [three.js](https://github.com/mrdoob/three.js) (MIT), including the `Sky` (Preetham) and `RGBELoader` addons
 - [pmndrs/postprocessing](https://github.com/pmndrs/postprocessing) (Zlib)
 - [N8AO](https://github.com/N8python/n8ao) (ISC)
-- [DialKit](https://github.com/joshpuckett/dialkit) (MIT) for the control panel; its stylesheet is inlined
 - HDRI: [kloppenheim_07_puresky](https://polyhaven.com/a/kloppenheim_07_puresky) from Poly Haven (CC0)
 - Fonts: Inter via Google Fonts (OFL)
 - Bottle model and label artwork supplied by the project owner
