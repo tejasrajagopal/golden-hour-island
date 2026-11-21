@@ -21,6 +21,12 @@
     transition: opacity 1.2s; white-space: nowrap; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; z-index: 5; transition: opacity 1s;
     background: linear-gradient(var(--sky-top), var(--sky-bottom)); color: var(--text); font-weight: 600; font-size: 18px; letter-spacing: .08em; }
+  #soundBtn { position: fixed; top: max(14px, env(safe-area-inset-top)); right: 14px; z-index: 4; display: flex; align-items: center; gap: 7px;
+    padding: 7px 13px 7px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.4); background: rgba(24,40,70,.28);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: var(--text); font: 500 12.5px Inter, system-ui, sans-serif; cursor: pointer; }
+  #soundBtn:hover { background: rgba(24,40,70,.42); }
+  #soundBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  #soundBtn .w { display: none; } #soundBtn[aria-pressed="true"] .w { display: inline; } #soundBtn[aria-pressed="true"] .x { display: none; }
   #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; z-index: 6;
     background: #8fb0de; color: #fff; font-size: 15px; }
 </style>
@@ -36,7 +42,7 @@
 </head>
 <body>
 <div id="loading">GOLDEN HOUR</div>
-<div id="hint">Hover the moss to make it bloom · tap the bottle to slosh it · drag to orbit</div>
+<div id="hint">Hover the moss to make it bloom · tap the bottle to slosh it · drag to orbit · tap for sound</div>
 <div id="err">This scene needs WebGL 2. Try a recent desktop Chrome, Edge, Safari or Firefox.</div>
 
 <script type="application/octet-stream" id="bottle-data">
@@ -49,7 +55,7 @@ import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 import { mergeGeometries, mergeVertices, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';                       // Preetham atmospheric scattering (three.js, MIT)
-import { EffectComposer, RenderPass, EffectPass, BloomEffect, ToneMappingEffect, ToneMappingMode,
+import { EffectComposer, RenderPass, EffectPass, BloomEffect, ToneMappingEffect, ToneMappingMode, LUT3DEffect, LookupTexture,
          VignetteEffect, NoiseEffect, DepthOfFieldEffect } from 'postprocessing';   // pmndrs/postprocessing (Zlib)
 import { N8AOPostPass } from 'n8ao';                                    // N8AO ambient occlusion (ISC)
 
@@ -112,7 +118,9 @@ function fbm3(x, y, z, oct = 4) { let s = 0, a = 0.5, n = 0; for (let i = 0; i <
 const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const UP = V3(0, 1, 0);
-const MOBILE = Math.min(innerWidth, innerHeight) < 700;
+const FILM = new URLSearchParams(location.search).has('film');   // ?film: offline cinematic render to MP4 (local only)
+const MOBILE = !FILM && Math.min(innerWidth, innerHeight) < 700;
+const FILM_W = 2880, FILM_H = 2160;                     // film output: 4K, 4:3
 const ISL = 1.5;                                   // island radius (bottle is 1 unit wide)
 
 // GLSL noise used to add surface detail to standard materials
@@ -176,7 +184,7 @@ try {
   renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
   if (!renderer.capabilities.isWebGL2) throw new Error('webgl2');
 } catch (e) { document.getElementById('err').style.display = 'grid'; throw e; }
-renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE ? 1.5 : 2));
+renderer.setPixelRatio(FILM ? 1 : Math.min(devicePixelRatio, MOBILE ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NoToneMapping;          // AgX is applied in the post stack
 renderer.shadowMap.enabled = true;
@@ -1120,6 +1128,7 @@ const bloomer = (() => {
 })();
 
 // pointer: hovering (or tapping) the moss grows flowers; hovering the bottle sloshes the liquid
+let bloomBurst = false;   // lets the sound engine tell a tap burst from a hover bloom
 const pointer = { ndc: new THREE.Vector2(), last: 0, lastHit: new THREE.Vector3(1e9, 0, 0), down: null, px: 0 };
 const pick = new THREE.Raycaster();
 function pickAt(clientX, clientY) {
@@ -1141,6 +1150,7 @@ function bloomAt(clientX, clientY, burst) {
   const tan = V3().crossVectors(n, UP).normalize(); if (tan.lengthSq() < 0.1) tan.set(1, 0, 0);
   const bit = V3().crossVectors(n, tan);
   const count = burst ? 5 : 1 + (rand() < 0.4 ? 1 : 0);
+  bloomBurst = !!burst;
   for (let k = 0; k < count; k++) {
     const a = rand() * 6.283, d = k === 0 && !burst ? 0 : rr(0.02, burst ? 0.12 : 0.05);
     const p = lp.clone().addScaledVector(tan, Math.cos(a) * d).addScaledVector(bit, Math.sin(a) * d);
@@ -1161,7 +1171,9 @@ renderer.domElement.addEventListener('pointerdown', (ev) => { pointer.down = [ev
 renderer.domElement.addEventListener('pointerup', (ev) => {
   const d = pointer.down; pointer.down = null;
   if (!d || Math.hypot(ev.clientX - d[0], ev.clientY - d[1]) > 6 || performance.now() - d[2] > 400) return;   // was a drag
-  if (bloomAt(ev.clientX, ev.clientY, true) === 'bottle') { SLOSH.v.x += rr(-0.35, 0.35); SLOSH.v.y += rr(-0.25, 0.25); }
+  const what = bloomAt(ev.clientX, ev.clientY, true);
+  if (what === 'bottle') { SLOSH.v.x += rr(-0.35, 0.35); SLOSH.v.y += rr(-0.25, 0.25); if (sound) sound.glass(); }
+  else if (what === 'moss' && sound) sound.mossTap((ev.clientX / innerWidth) * 2 - 1);
 });
 
 /* =====================================================================
@@ -1266,13 +1278,39 @@ const bloom = new BloomEffect({ mipmapBlur: true, luminanceThreshold: 0.85, lumi
 const tone = new ToneMappingEffect({ mode: ToneMappingMode.NEUTRAL });
 const vignette = new VignetteEffect({ offset: 0.32, darkness: 0.42 });
 const grain = new NoiseEffect({ premultiply: true }); grain.blendMode.opacity.value = 0.18;
-composer.addPass(new EffectPass(camera, bloom, tone, vignette, grain));
+// "Golden Hour Film" grade, applied as a 3D LUT in film mode (and exported as a .cube for editors):
+// matte blacks, cool-teal shadows, warm highlights, a gentle S-curve and a touch more saturation.
+function gradeRGB(r, g, b) {
+  const s = (x) => x * x * (3 - 2 * x);
+  let c = [r, g, b].map((x) => x + (s(x) - x) * 0.35);                         // soft S-curve
+  const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const sh = (1 - l) * (1 - l), hi = l * l;
+  c = [c[0] - 0.02 * sh + 0.045 * hi, c[1] + 0.006 * sh + 0.022 * hi, c[2] + 0.03 * sh - 0.045 * hi];   // split tone
+  const l2 = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  c = c.map((x) => l2 + (x - l2) * 1.08);                                     // saturation
+  return c.map((x) => Math.min(1, Math.max(0, 0.025 + x * 0.965)));            // matte black lift
+}
+function makeGradeLUT(size) {
+  const lut = LookupTexture.createNeutral(size), d = lut.image.data;
+  for (let i = 0; i < d.length; i += 4) { const o = gradeRGB(d[i], d[i + 1], d[i + 2]); d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2]; }
+  lut.needsUpdate = true; return lut;
+}
+function gradeCube(size = 33) {
+  let out = `TITLE "Golden Hour Film"\nLUT_3D_SIZE ${size}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n`;
+  for (let b = 0; b < size; b++) for (let g = 0; g < size; g++) for (let r = 0; r < size; r++) {
+    const o = gradeRGB(r / (size - 1), g / (size - 1), b / (size - 1)); out += o.map((x) => x.toFixed(6)).join(' ') + '\n';
+  }
+  return out;
+}
+const lutFx = FILM ? new LUT3DEffect(makeGradeLUT(32)) : null;
+if (FILM) { vignette.darkness = 0.58; vignette.offset = 0.28; grain.blendMode.opacity.value = 0.3; scene.fog = new THREE.FogExp2(new THREE.Color('#a9c0e2'), 0.028); }
+composer.addPass(new EffectPass(camera, bloom, tone, ...(lutFx ? [lutFx] : []), vignette, grain));
 
 function resize() {
   if (typeof sizeGlassRT === 'function') queueMicrotask(sizeGlassRT);
-  const w = innerWidth, h = innerHeight, pr = renderer.getPixelRatio();
-  renderer.setSize(w, h); composer.setSize(w, h);
-  frameCamera(false);
+  const w = FILM ? FILM_W : innerWidth, h = FILM ? FILM_H : innerHeight, pr = renderer.getPixelRatio();
+  renderer.setSize(w, h, !FILM); composer.setSize(w, h);
+  if (FILM) { camera.aspect = w / h; camera.updateProjectionMatrix(); } else frameCamera(false);
   motes.uniforms.uPx.value = h * pr / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
 }
 addEventListener('resize', resize);
@@ -1282,14 +1320,25 @@ addEventListener('resize', resize);
    ===================================================================== */
 const clock = new THREE.Clock();
 let t = 0, frame = 0, perfAcc = 0, perfN = 0;
+let focusOverride = null;
 function render() {
   const dt = Math.min(clock.getDelta(), 1 / 20);
-  t += dt; frame++;
+  step(dt);
+  if (sound) sound.update(dt);
   // adaptive quality: if the first few seconds run slower than ~40 fps on a high-DPI screen, drop to 1x pixels
   if (perfN >= 0 && frame > 30) {
     perfAcc += dt; perfN++;
     if (perfN === 90) { if (perfAcc / perfN > 1 / 40 && renderer.getPixelRatio() > 1) { renderer.setPixelRatio(1); resize(); } perfN = -1; }
   }
+  if (frame === 3) {
+    const l = document.getElementById('loading'); if (l) { l.style.opacity = '0'; setTimeout(() => l.remove(), 1100); }
+    setTimeout(() => { const h = document.getElementById('hint'); if (h) h.style.opacity = '0'; }, 9000);
+  }
+  requestAnimationFrame(render);
+}
+// one simulation + render step with a fixed dt (used by both the realtime loop and film mode)
+function step(dt) {
+  t += dt; frame++;
   U.uTime.value = t;
   island.position.y = Math.sin(t * 0.55) * 0.07;
   island.rotation.z = Math.sin(t * 0.37) * 0.012;
@@ -1301,24 +1350,558 @@ function render() {
   updateSlosh(dt);
   if (window.__bubbles) window.__bubbles(dt, t);
   bloomer.update(t);
-  controls.update();
+  if (!FILM) controls.update();
   skyDome.position.copy(camera.position);
-  bottle.getWorldPosition(dof.target).y += 0.75;
+  if (focusOverride) dof.target.copy(focusOverride); else bottle.getWorldPosition(dof.target).y += 0.75;
   if (!GLASS.rt) sizeGlassRT();
   renderGlassBackFaces();
   composer.render(dt);
-  if (frame === 3) {
-    const l = document.getElementById('loading'); if (l) { l.style.opacity = '0'; setTimeout(() => l.remove(), 1100); }
-    setTimeout(() => { document.getElementById('hint').style.opacity = '0'; }, 9000);
-  }
-  requestAnimationFrame(render);
 }
+
+/* =====================================================================
+   10b. Sound voices, shared by the film's offline mix and the live site's real-time audio.
+   Each voice schedules nodes at time t on any AudioContext (realtime or offline).
+   ===================================================================== */
+function makeVoices(ctx, dest, send, white, rnd) {
+  const scale = [587.33, 659.25, 739.99, 880.0, 987.77, 1174.66, 1318.51, 1479.98, 1760.0, 1975.53];   // D major pentatonic
+  const chime = (out, f, t, amp, decay) => {
+    [[1, 0.6], [2.003, 0.18], [3.01, 0.06], [4.2, 0.025]].forEach(([m, a]) => {
+      const o = ctx.createOscillator(); o.frequency.value = f * m;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a * amp, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0003, t + decay / Math.sqrt(m));
+      o.connect(g).connect(out); o.start(t); o.stop(t + decay + 0.1);
+    });
+  };
+  const panned = (gain, x, verb) => {
+    const out = ctx.createGain(); out.gain.value = gain;
+    const pn = ctx.createStereoPanner(); pn.pan.value = Math.max(-0.9, Math.min(0.9, x));
+    out.connect(pn).connect(dest); send(pn, verb); return out;
+  };
+  return {
+    // a flower: stem pop -> petal rustle -> chime (pitch rises left to right), panned to screen x (-1..1)
+    bloom(t, x, burst) {
+      const out = panned(burst ? 0.12 : 0.09, x * 0.85, 0.55);
+      { const o = ctx.createOscillator(), g = ctx.createGain(), tp = t + 0.04;
+        o.frequency.setValueAtTime(280, tp); o.frequency.exponentialRampToValueAtTime(110, tp + 0.07);
+        g.gain.setValueAtTime(0, tp); g.gain.linearRampToValueAtTime(0.55, tp + 0.004); g.gain.exponentialRampToValueAtTime(0.001, tp + 0.09);
+        o.connect(g).connect(out); o.start(tp); o.stop(tp + 0.12); }
+      { const n = ctx.createBufferSource(); n.buffer = white; const tr = t + 0.4;
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3000 + rnd() * 1800; bp.Q.value = 1.3;
+        const g = ctx.createGain(); g.gain.setValueAtTime(0, tr); g.gain.linearRampToValueAtTime(0.22, tr + 0.25); g.gain.exponentialRampToValueAtTime(0.001, tr + 1.1);
+        n.connect(bp).connect(g).connect(out); n.start(tr, rnd() * 1.2); n.stop(tr + 1.2); }
+      const idx = Math.max(0, Math.min(scale.length - 1, Math.round((x * 0.5 + 0.5) * 6 + rnd() * 3)));
+      chime(out, scale[idx], t + 0.45, 1, 1.6);
+    },
+    // tap on the moss: a sparkling arpeggio
+    sparkle(t, x) {
+      const out = panned(0.09, x * 0.7, 0.75);
+      [1174.66, 1479.98, 1760.0, 2349.32, 2959.96].forEach((f, k) => chime(out, f, t + 0.2 + k * 0.065, 1, 2.2));
+    },
+    // tap on the bottle: glass "tink" (inharmonic partials + click)
+    tink(t) {
+      const out = ctx.createGain(); out.gain.value = 0.26; out.connect(dest); send(out, 0.5);
+      [[2210, 1.6, 0.5], [3415, 1.1, 0.3], [5230, 0.6, 0.18], [6890, 0.35, 0.1], [1240, 0.5, 0.15]].forEach(([f, d, a]) => {
+        const o = ctx.createOscillator(); o.frequency.value = f * (1 + (rnd() - 0.5) * 0.004);
+        const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0003, t + d);
+        o.connect(g).connect(out); o.start(t); o.stop(t + d + 0.05);
+      });
+      const n = ctx.createBufferSource(); n.buffer = white; const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.012);
+      n.connect(hp).connect(g).connect(out); n.start(t); n.stop(t + 0.03);
+    },
+    // liquid glugs after the tap
+    glugs(t) {
+      [0.14, 0.44, 0.8, 1.18, 1.62].forEach((dt, k) => {
+        const tg = t + dt, n = ctx.createBufferSource(); n.buffer = white;
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 9;
+        bp.frequency.setValueAtTime(260 + k * 40, tg); bp.frequency.exponentialRampToValueAtTime(640 + k * 60, tg + 0.12);
+        const g = ctx.createGain(), a = 0.9 * Math.pow(0.7, k);
+        g.gain.setValueAtTime(0, tg); g.gain.linearRampToValueAtTime(a, tg + 0.02); g.gain.exponentialRampToValueAtTime(0.001, tg + 0.18);
+        n.connect(bp).connect(g).connect(dest); send(g, 0.2); n.start(tg, rnd()); n.stop(tg + 0.25);
+      });
+    },
+    // one small bubble
+    bubble(t, amp) {
+      const o = ctx.createOscillator(), f0 = 650 + rnd() * 950;
+      o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 1.9, t + 0.045);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(amp, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.06);
+      const pn = ctx.createStereoPanner(); pn.pan.value = (rnd() - 0.5) * 0.4;
+      o.connect(g).connect(pn).connect(dest); o.start(t); o.stop(t + 0.08);
+    },
+  };
+}
+
+/* =====================================================================
+   11. Film mode (?film, local only): a deterministic, single-take cinematic render.
+   Fixed 1/30 s steps at 1920x1080, a smoothed spline camera, scripted pointer beats
+   (hover-sweep across the moss so flowers bloom, a tap burst, then a tap + swipe on the
+   bottle to slosh the liquid), a drawn cursor, fades, H.264 via WebCodecs + mp4-muxer.
+   The MP4 is POSTed to tools/film_server.py, which saves it into film/.
+   ===================================================================== */
+const film = (() => {
+  if (!FILM) return null;
+  const W = FILM_W, H = FILM_H, FPS = 30, DUR = 26, SUB = 3, SHUTTER = 0.5, PX = FILM_H / 1080;
+  const yieldNow = () => new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0); });
+  // camera keys: [time, camera position, look-at target]
+  const K = [
+    [0.0,  [0.0, -0.9, 19.0], [0, 0.35, 0]],      // wide, low: the island floating over the clouds
+    [4.0,  [0.9, 0.85, 11.2], [0, 0.6, 0]],       // crane up into the hero framing
+    [8.0,  [6.8, 1.55, 7.2],  [0, 0.75, 0]],      // orbit right: glass refraction + label from the side
+    [11.0, [3.6, 0.95, 3.9],  [0.1, 0.32, 0.6]],  // drop low over the moss
+    [16.0, [-2.7, 0.95, 3.6], [-0.3, 0.32, 0.6]], // track left along the moss while it blooms
+    [18.6, [-0.6, 1.12, 2.9], [0, 0.92, 0]],      // push in to the bottle
+    [21.3, [0.45, 1.05, 2.65],[0, 0.92, 0]],      // hold: tap + swipe, the liquid sloshes
+    [24.6, [0.0, 1.5, 12.6],  [0, 0.62, 0]],      // pull back to the wide hero (spring settles by 26 s)
+  ];
+  const times = K.map((k) => k[0]);
+  const posC = new THREE.CatmullRomCurve3(K.map((k) => V3(...k[1])), false, 'centripetal');
+  const tgtC = new THREE.CatmullRomCurve3(K.map((k) => V3(...k[2])), false, 'centripetal');
+  const uRaw = (time) => {
+    time = THREE.MathUtils.clamp(time, 0, DUR);
+    let i = 0; while (i < times.length - 2 && time > times[i + 1]) i++;
+    const f = THREE.MathUtils.clamp((time - times[i]) / (times[i + 1] - times[i]), 0, 1);
+    return (i + f) / (times.length - 1);
+  };
+  const ease = (x) => x * x * (3 - 2 * x);
+  // A critically damped spring follows the keyed path, like an operator on a fluid head: no velocity
+  // kinks at the keys, natural ease-in from rest and a soft settle. (Lag ~1/OMEGA s, keys are set early.)
+  const OMEGA = 3.0, HSTEP = 1 / 480;
+  const rig = { p: V3(), v: V3(), q: V3(), w: V3(), f: V3(), fv: V3(), t: 0, init: false };
+  const dP = V3(), dT = V3(), dF = V3(), acc = V3();
+  const springTo = (x, v, target, h, om) => { acc.copy(x).sub(target).multiplyScalar(-om * om).addScaledVector(v, -2 * om); v.addScaledVector(acc, h); x.addScaledVector(v, h); };
+  const bottleFocus = V3(), hitW = V3();
+  function desiredFocus(time, out) {
+    bottle.getWorldPosition(bottleFocus).y += 0.75;
+    // rack focus: the bottle, then whatever the cursor is blooming on the moss, then back to the bottle
+    if (time > 11.2 && time < 17.4 && pointer.lastHit.x < 1e8) return out.copy(island.localToWorld(hitW.copy(pointer.lastHit)));
+    if (time > 11.2 && time < 17.4) return out.copy(dT);
+    return out.copy(bottleFocus);
+  }
+  function advanceRig(time) {
+    if (!rig.init) {
+      const u = uRaw(0); posC.getPoint(u, rig.p); tgtC.getPoint(u, rig.q); dT.copy(rig.q); desiredFocus(0, rig.f);
+      rig.v.set(0, 0, 0); rig.w.set(0, 0, 0); rig.fv.set(0, 0, 0); rig.t = time; rig.init = true;
+    }
+    while (rig.t + 1e-9 < time) {
+      const h = Math.min(HSTEP, time - rig.t); rig.t += h;
+      const u = uRaw(rig.t); posC.getPoint(u, dP); tgtC.getPoint(u, dT);
+      springTo(rig.p, rig.v, dP, h, OMEGA); springTo(rig.q, rig.w, dT, h, OMEGA);
+    }
+    desiredFocus(time, dF);
+    springTo(rig.f, rig.fv, dF, 1 / (FPS * SUB), 4.0);
+  }
+  function applyRig(time) {
+    advanceRig(time);
+    camera.position.copy(rig.p); camera.lookAt(rig.q); camera.updateMatrixWorld();
+    focusOverride = rig.f;
+    const dist = camera.position.distanceTo(rig.f);                          // shallower depth of field up close
+    if (dof.cocMaterial) dof.cocMaterial.worldFocusRange = THREE.MathUtils.clamp(dist * 0.26, 0.5, 3.6);
+    dof.bokehScale = 4.2;
+  }
+  // pointer script, in normalised screen coordinates; returns {x, y, a (opacity), tap (seconds since last tap or -1)}
+  const lerp = THREE.MathUtils.lerp;
+  function cursorAt(time) {
+    if (time >= 11.5 && time <= 17.0) {
+      const p = THREE.MathUtils.clamp((time - 11.9) / 4.4, 0, 1), e = ease(p);
+      return { x: lerp(0.22, 0.78, e), y: lerp(0.47, 0.55, e) + 0.015 * Math.sin(e * Math.PI * 3), a: THREE.MathUtils.clamp(Math.min(time - 11.5, 17.0 - time) / 0.4, 0, 1), tap: time >= 16.3 ? time - 16.3 : -1, sweep: time >= 11.9 && time <= 16.3 };
+    }
+    if (time >= 19.2 && time <= 21.8) {
+      let x, y;
+      if (time < 19.9) { const e = ease((time - 19.2) / 0.7); x = lerp(0.64, 0.5, e); y = lerp(0.7, 0.56, e); }
+      else if (time < 20.5) { x = 0.5; y = 0.56; }
+      else { const e = ease(Math.min(1, (time - 20.5) / 0.6)); x = lerp(0.5, 0.6, e); y = lerp(0.56, 0.5, e); }
+      return { x, y, a: THREE.MathUtils.clamp(Math.min(time - 19.2, 21.8 - time) / 0.35, 0, 1), tap: time >= 20.0 ? time - 20.0 : -1, swipe: time >= 20.5 && time <= 21.1 };
+    }
+    return null;
+  }
+  const toClient = (c) => { const r = renderer.domElement.getBoundingClientRect(); return [r.left + c.x * r.width, r.top + c.y * r.height]; };
+  let lastX = null, tappedMoss = false, tappedBottle = false;
+  // event log for the sound design: every bloom (time + screen x for panning), taps, camera speed, slosh speed
+  const ev = { blooms: [], taps: [], camSpeed: new Float32Array(DUR * FPS), slosh: new Float32Array(DUR * FPS) };
+  let filmTime = 0, burstNow = false;
+  const spawn0 = bloomer.spawn;
+  bloomer.spawn = (p, n, t) => {
+    const sx = island.localToWorld(p.clone()).project(camera).x;
+    ev.blooms.push({ time: filmTime + (t - U.uTime.value), x: sx, burst: burstNow });
+    return spawn0(p, n, t);
+  };
+  function actions(time) {
+    const c = cursorAt(time);
+    if (!c) { lastX = null; return; }
+    const [cx, cy] = toClient(c);
+    if (c.sweep) bloomAt(cx, cy, false);
+    if (time >= 16.3 && !tappedMoss && time < 17) { tappedMoss = true; burstNow = true; bloomAt(cx, cy, true); burstNow = false; ev.taps.push({ type: 'moss', time, x: c.x * 2 - 1 }); }
+    if (time >= 20.0 && !tappedBottle && time < 21) {
+      tappedBottle = true;
+      if (bloomAt(cx, cy, true) === 'bottle') { SLOSH.v.x += 0.32; SLOSH.v.y += 0.22; ev.taps.push({ type: 'bottle', time, x: c.x * 2 - 1 }); }
+    }
+    if (c.swipe && lastX !== null) SLOSH.v.x += THREE.MathUtils.clamp((cx - lastX) * 0.004, -0.15, 0.15);
+    lastX = cx;
+  }
+  // composite: rendered frame + drawn cursor + fades
+  const comp = document.createElement('canvas'); comp.width = W; comp.height = H;
+  comp.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;object-fit:contain;background:#000;z-index:3';
+  const g = comp.getContext('2d');
+  function composite(time) { g.globalAlpha = 1; g.drawImage(renderer.domElement, 0, 0, W, H); overlay(time); }
+  function overlay(time) {
+    const c = cursorAt(time);
+    if (c && c.a > 0) {
+      const x = c.x * W, y = c.y * H;
+      g.save(); g.globalAlpha = c.a;
+      if (c.tap >= 0 && c.tap < 0.7) {                       // tap ripple
+        const k = c.tap / 0.7; g.beginPath(); g.arc(x, y, (18 + 60 * ease(k)) * PX, 0, Math.PI * 2);
+        g.strokeStyle = `rgba(255,255,255,${0.75 * (1 - k)})`; g.lineWidth = 3 * PX; g.stroke();
+      }
+      const press = c.tap >= 0 && c.tap < 0.25 ? Math.sin(c.tap / 0.25 * Math.PI) : 0;
+      g.shadowColor = 'rgba(0,0,0,0.35)'; g.shadowBlur = 14 * PX;
+      g.beginPath(); g.arc(x, y, (19 - 5 * press) * PX, 0, Math.PI * 2); g.fillStyle = 'rgba(255,255,255,0.18)'; g.fill();
+      g.lineWidth = 2.5 * PX; g.strokeStyle = 'rgba(255,255,255,0.95)'; g.stroke();
+      g.beginPath(); g.arc(x, y, 4 * PX, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+      g.restore();
+    }
+    const fade = Math.min(1, time / 0.8, (DUR - time) / 1.0);
+    if (fade < 1) { g.fillStyle = `rgba(0,0,0,${1 - Math.max(0, fade)})`; g.fillRect(0, 0, W, H); }
+  }
+
+  // ---------------------------------------------------------------- sound design
+  // Everything is synthesised (no samples): an airy wind bed and a warm golden-hour pad that moves
+  // D maj9 -> G maj7 -> B m9 -> D, whooshes driven by the camera's speed, a pop + petal rustle + chime
+  // for every flower (pitched along a D-major pentatonic, panned to where it blooms), a sparkle arpeggio
+  // for the moss tap, a glass "tink", slosh noise driven by the liquid's motion, glugs and bubbles.
+  async function synthAudio(ev) {
+    const SR = 48000, N = Math.round(DUR * SR);
+    const ctx = new OfflineAudioContext(2, N, SR);
+    let seedA = 90210;
+    const ar = () => { seedA = (seedA + 0x6D2B79F5) | 0; let x = seedA; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0, 0); master.gain.linearRampToValueAtTime(1, 0.8); master.gain.setValueAtTime(1, DUR - 1.0); master.gain.linearRampToValueAtTime(0, DUR);
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = 0.006; comp.release.value = 0.25;
+    master.connect(comp).connect(ctx.destination);
+    // reverb: generated stereo impulse response, darkening as it decays
+    const irLen = Math.round(SR * 3.2), ir = ctx.createBuffer(2, irLen, SR);
+    for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); let lp = 0; for (let i = 0; i < irLen; i++) { const tt = i / SR; lp += ((ar() * 2 - 1) - lp) * (0.25 + 0.6 * Math.exp(-tt * 1.4)); d[i] = lp * Math.exp(-tt * 2.0) * Math.min(1, i / (SR * 0.012)); } }
+    const verb = ctx.createConvolver(); verb.buffer = ir;
+    const verbOut = ctx.createGain(); verbOut.gain.value = 0.5; verb.connect(verbOut).connect(master);
+    const send = (node, amt) => { const g = ctx.createGain(); g.gain.value = amt; node.connect(g).connect(verb); };
+    const noiseBuf = (sec, pink) => {
+      const b = ctx.createBuffer(1, Math.round(SR * sec), SR), d = b.getChannelData(0);
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < d.length; i++) {
+        const w = ar() * 2 - 1;
+        if (!pink) { d[i] = w; continue; }
+        b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+        b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+        d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926;
+      }
+      return b;
+    };
+    const pinkA = noiseBuf(6, true), pinkB = noiseBuf(6.37, true), white = noiseBuf(2.3, false);
+    const loopSrc = (buf) => { const n = ctx.createBufferSource(); n.buffer = buf; n.loop = true; n.start(0); return n; };
+    const V = makeVoices(ctx, master, send, white, ar);
+
+    // 1) wind bed: two decorrelated pink-noise bands drifting slowly, plus faint high air
+    [[pinkA, -0.6, 0.0], [pinkB, 0.6, 1.7]].forEach(([buf, pan, ph]) => {
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.6;
+      const fc = new Float32Array(96), gc = new Float32Array(96);
+      for (let i = 0; i < 96; i++) { fc[i] = 420 + 240 * Math.sin(i * 0.23 + ph) + 110 * Math.sin(i * 0.61 + 2 * ph); gc[i] = 0.22 * (0.75 + 0.25 * Math.sin(i * 0.17 + ph)); }
+      bp.frequency.setValueCurveAtTime(fc, 0, DUR);
+      const g = ctx.createGain(); g.gain.setValueCurveAtTime(gc, 0, DUR);
+      const pn = ctx.createStereoPanner(); pn.pan.value = pan;
+      loopSrc(buf).connect(bp).connect(g).connect(pn).connect(master);
+    });
+    { const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6000; const g = ctx.createGain(); g.gain.value = 0.004; loopSrc(white).connect(hp).connect(g).connect(master); }
+
+    // 2) warm pad, crossfading chords
+    const chords = [
+      [0.0,  [146.83, 220.0, 329.63, 369.99, 440.0]],   // D maj9
+      [11.5, [98.0, 146.83, 246.94, 369.99, 440.0]],    // G maj7
+      [17.0, [123.47, 185.0, 293.66, 369.99, 554.37]],  // B m9
+      [21.8, [146.83, 220.0, 329.63, 440.0, 659.25]],   // D (resolve)
+    ];
+    chords.forEach(([t0, notes], ci) => {
+      const t1 = ci < chords.length - 1 ? chords[ci + 1][0] : DUR;
+      const start = Math.max(0, t0 - 1.2), stop = Math.min(DUR, t1 + 1.6);
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1000; lp.Q.value = 0.3;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, start); g.gain.linearRampToValueAtTime(0.05, t0 + 1.8);
+      g.gain.setValueAtTime(0.05, Math.max(t0 + 1.8, t1 - 0.6)); g.gain.linearRampToValueAtTime(0, Math.min(DUR, t1 + 1.4));
+      lp.connect(g); g.connect(master); send(g, 0.6);
+      notes.forEach((f, k) => {
+        for (const det of [-5, 5]) {
+          const o = ctx.createOscillator(); o.type = k === 0 ? 'triangle' : 'sawtooth';
+          o.frequency.value = f; o.detune.value = det + (ar() - 0.5) * 3;
+          const og = ctx.createGain(); og.gain.value = (k === 0 ? 0.9 : 0.4) / notes.length;
+          const pn = ctx.createStereoPanner(); pn.pan.value = (k / (notes.length - 1) * 2 - 1) * 0.5 * Math.sign(det);
+          o.connect(og).connect(pn).connect(lp); o.start(start); o.stop(stop);
+        }
+      });
+    });
+
+    // 3) whooshes following the camera's speed
+    {
+      const n = ev.camSpeed.length, gc = new Float32Array(n), fc = new Float32Array(n);
+      let sm = 0;
+      for (let i = 0; i < n; i++) { sm += (ev.camSpeed[i] - sm) * 0.12; gc[i] = Math.min(0.6, Math.pow(sm / 3.5, 2) * 0.5); fc[i] = 260 + Math.min(2400, sm * 520); }
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1; bp.frequency.setValueCurveAtTime(fc, 0, DUR);
+      const g = ctx.createGain(); g.gain.setValueCurveAtTime(gc, 0, DUR);
+      loopSrc(pinkB).connect(bp).connect(g).connect(master); send(g, 0.25);
+    }
+
+    // 4) cursor appears: a soft rising whisp
+    [11.5, 19.2].forEach((t) => {
+      const n = ctx.createBufferSource(); n.buffer = white;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2; bp.frequency.setValueAtTime(900, t); bp.frequency.exponentialRampToValueAtTime(4200, t + 0.45);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.08, t + 0.2); g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      n.connect(bp).connect(g).connect(master); send(g, 0.4); n.start(t, ar()); n.stop(t + 0.7);
+    });
+
+    // 5-7) flowers, moss tap, bottle tap: the shared voices (identical to the live site)
+    ev.blooms.forEach((b) => { if (b.time < DUR - 0.2) V.bloom(b.time, b.x, b.burst); });
+    ev.taps.filter((x) => x.type === 'moss').forEach((tp) => V.sparkle(tp.time, tp.x));
+    ev.taps.filter((x) => x.type === 'bottle').forEach((tp) => { V.tink(tp.time); V.glugs(tp.time); });
+
+    // 8) slosh: low noise whose level/brightness follow the liquid's speed, rocking at ~1.3 Hz
+    {
+      const n = ev.slosh.length, gc = new Float32Array(n), fc = new Float32Array(n);
+      let sm = 0;
+      for (let i = 0; i < n; i++) { sm += (ev.slosh[i] - sm) * 0.3; gc[i] = Math.min(0.9, sm * 2.4); fc[i] = 380 + sm * 1100; }
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2; lp.frequency.setValueCurveAtTime(fc, 0, DUR);
+      const am = ctx.createGain(); am.gain.value = 0.6;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 1.35; const lg = ctx.createGain(); lg.gain.value = 0.4; lfo.connect(lg).connect(am.gain); lfo.start(0);
+      const g = ctx.createGain(); g.gain.setValueCurveAtTime(gc, 0, DUR);
+      loopSrc(pinkA).connect(lp).connect(am).connect(g).connect(master); send(g, 0.2);
+    }
+
+    // 9) bubbles while we are close to the bottle (denser just after the tap)
+    const bubble = V.bubble;
+    for (let t = 18.6; t < 23.4; t += 0.14 + ar() * 0.4) bubble(t, 0.03 + ar() * 0.03);
+    const tb = ev.taps.find((x) => x.type === 'bottle');
+    if (tb) for (let t = tb.time + 0.1; t < tb.time + 1.8; t += 0.04 + ar() * 0.1) bubble(t, 0.035 + ar() * 0.035);
+
+    // 10) closing shimmer as we pull back
+    {
+      const out = ctx.createGain(); out.gain.setValueAtTime(0, 21.8); out.gain.linearRampToValueAtTime(0.02, 23.5); out.gain.linearRampToValueAtTime(0, DUR);
+      out.connect(master); send(out, 0.9);
+      [2349.32, 2959.96, 3520.0, 4434.92].forEach((f, k) => {
+        const o = ctx.createOscillator(); o.frequency.value = f;
+        const tg = ctx.createGain(); tg.gain.value = 0.5; const lfo = ctx.createOscillator(); lfo.frequency.value = 3 + k * 0.7; const lg = ctx.createGain(); lg.gain.value = 0.4;
+        lfo.connect(lg).connect(tg.gain); lfo.start(21.8); o.connect(tg).connect(out); o.start(21.8); o.stop(DUR);
+      });
+    }
+
+    const buf = await ctx.startRendering();
+    // normalise to -1 dBFS
+    let peak = 0; for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i])); }
+    const k = peak > 0 ? 0.89 / peak : 1;
+    for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= k; }
+    return { buf, peak, gain: k };
+  }
+  function wavBytes(buf) {
+    const L = buf.getChannelData(0), Rr = buf.getChannelData(1), n = L.length, out = new DataView(new ArrayBuffer(44 + n * 4));
+    const str = (o, s2) => { for (let i = 0; i < s2.length; i++) out.setUint8(o + i, s2.charCodeAt(i)); };
+    str(0, 'RIFF'); out.setUint32(4, 36 + n * 4, true); str(8, 'WAVEfmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 2, true);
+    out.setUint32(24, buf.sampleRate, true); out.setUint32(28, buf.sampleRate * 4, true); out.setUint16(32, 4, true); out.setUint16(34, 16, true); str(36, 'data'); out.setUint32(40, n * 4, true);
+    for (let i = 0; i < n; i++) { out.setInt16(44 + i * 4, Math.max(-1, Math.min(1, L[i])) * 32767, true); out.setInt16(46 + i * 4, Math.max(-1, Math.min(1, Rr[i])) * 32767, true); }
+    return out.buffer;
+  }
+  const st = { state: 'idle', frame: 0, total: DUR * FPS, error: null };
+  window.__film = st;
+  const label = document.createElement('div');
+  label.style.cssText = 'position:fixed;left:12px;top:12px;z-index:9;font:600 13px Inter,system-ui,sans-serif;color:#fff;background:rgba(0,0,0,.5);padding:6px 10px;border-radius:8px';
+  async function warm() {
+    document.getElementById('hint')?.remove(); document.getElementById('loading')?.remove();
+    controls.enabled = false; document.body.append(comp, label);
+    renderer.domElement.style.opacity = '0';
+    for (let i = 0; i < 40; i++) { applyRig(0); step(1 / FPS); await yieldNow(); }   // compile shaders, settle the sim
+  }
+  st.preview = async (time) => { applyRig(time); step(1 / FPS); composite(time); return 'ok'; };
+  st.start = async () => {
+    try {
+      st.state = 'loading encoder';
+      const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs');
+      const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: 'avc', width: W, height: H, frameRate: FPS },
+        audio: { codec: 'aac', numberOfChannels: 2, sampleRate: 48000 }, fastStart: 'in-memory' });
+      const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { st.error = String(e); } });
+      enc.configure({ codec: 'avc1.640033', width: W, height: H, bitrate: 60e6, framerate: FPS, latencyMode: 'quality' });
+      st.state = 'rendering'; st.t0 = performance.now();
+      const prevCam = new THREE.Vector3(); applyRig(0); prevCam.copy(camera.position);
+      const subDt = SHUTTER / (SUB * FPS), firstDt = 1 / FPS - (SUB - 1) * subDt;
+      for (let i = 0; i < st.total; i++) {
+        const time = i / FPS; filmTime = time;
+        for (let k = 0; k < SUB; k++) {                           // motion blur: average sub-frames across the open shutter
+          applyRig(time + k * subDt);
+          if (k === 0) { ev.camSpeed[i] = camera.position.distanceTo(prevCam) * FPS; prevCam.copy(camera.position); actions(time); }
+          step(k === 0 ? firstDt : subDt);
+          g.globalAlpha = 1 / (k + 1); g.drawImage(renderer.domElement, 0, 0, W, H);
+        }
+        g.globalAlpha = 1; ev.slosh[i] = SLOSH.v.length(); overlay(time);
+        const vf = new VideoFrame(comp, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+        enc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); vf.close();
+        while (enc.encodeQueueSize > 6) await yieldNow();
+        st.frame = i + 1; label.textContent = `Rendering film… ${st.frame} / ${st.total}`; st.elapsed = (performance.now() - st.t0) / 1000;
+        if (st.error) throw new Error(st.error);
+        await yieldNow();
+      }
+      st.state = 'encoding video'; await enc.flush();
+      st.state = 'synthesising audio'; label.textContent = 'Synthesising sound…';
+      st.events = { blooms: ev.blooms.length, taps: ev.taps.map((x) => x.type + '@' + x.time.toFixed(2)) };
+      const { buf, peak } = await synthAudio(ev); st.audioPeak = peak;
+      st.state = 'encoding audio';
+      const aenc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: (e) => { st.error = String(e); } });
+      aenc.configure({ codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 });
+      const L = buf.getChannelData(0), Rr = buf.getChannelData(1), F = 1024;
+      for (let i = 0; i < L.length; i += F) {
+        const n = Math.min(F, L.length - i), data = new Float32Array(n * 2);
+        data.set(L.subarray(i, i + n), 0); data.set(Rr.subarray(i, i + n), n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: 48000, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / 48000 * 1e6), data });
+        aenc.encode(ad); ad.close();
+        if (aenc.encodeQueueSize > 32) await yieldNow();
+      }
+      await aenc.flush(); muxer.finalize();
+      st.state = 'saving';
+      const res = await fetch('/save?name=golden-hour-film-4k-4x3.mp4', { method: 'POST', body: muxer.target.buffer });
+      await fetch('/save?name=golden-hour-4k-4x3-sfx.wav', { method: 'POST', body: wavBytes(buf) });
+      await fetch('/save?name=golden-hour-film-grade.cube', { method: 'POST', body: gradeCube(33) });
+      st.bytes = muxer.target.buffer.byteLength; st.state = res.ok ? 'saved' : 'save failed ' + res.status;
+      label.textContent = st.state === 'saved' ? `Saved golden-hour-film-4k-4x3.mp4 (${(st.bytes / 1e6).toFixed(1)} MB)` : st.state;
+    } catch (e) { st.state = 'error'; st.error = String(e && e.stack || e); label.textContent = 'Film error: ' + e; }
+  };
+  st.warm = warm;
+  st.testAudio = async () => {          // dry run of the sound design on fake events: returns loudness per section
+    const fake = { blooms: Array.from({ length: 40 }, (_, i) => ({ time: 12 + i * 0.11, x: -0.6 + i * 0.03, burst: false })),
+      taps: [{ type: 'moss', time: 16.3, x: 0.5 }, { type: 'bottle', time: 20.0, x: 0 }],
+      camSpeed: new Float32Array(DUR * FPS).map((_, i) => 2 + Math.sin(i / 40)), slosh: new Float32Array(DUR * FPS).map((_, i) => (i > 600 && i < 660 ? 0.35 : 0.01)) };
+    const { buf, peak } = await synthAudio(fake), L = buf.getChannelData(0), rms = {};
+    for (const [a, b] of [[1, 4], [6, 10], [12, 16], [16, 18], [19.8, 21.5], [23, 25]]) { let s2 = 0, n = 0; for (let i = a * 48000; i < b * 48000; i++, n++) s2 += L[i] * L[i]; rms[a + '-' + b] = (20 * Math.log10(Math.sqrt(s2 / n))).toFixed(1) + ' dB'; }
+    return { rawPeak: peak.toFixed(3), rms };
+  };
+  return st;
+})();
+
+/* =====================================================================
+   12. Live sound (synthesised with Web Audio): the film's voices, triggered by interaction, over a
+   quiet wind + pad bed; the slosh follows the liquid and a whoosh follows how fast you orbit.
+   Browsers only allow audio after a user gesture: it starts on the first click/tap, and the button
+   (top right) toggles it.
+   ===================================================================== */
+const sound = (() => {
+  if (FILM) return null;
+  let ctx = null, master = null, V = null, on = false, userOff = false, lastBloom = 0, padTimer = 0;
+  let sloshG, sloshLP, whooshG, whooshBP, haveCam = false;
+  const prevCam = new THREE.Vector3();
+  let sd = 4242;
+  const rnd = () => { sd = (sd + 0x6D2B79F5) | 0; let x = sd; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+  const btn = document.createElement('button');
+  btn.id = 'soundBtn'; btn.type = 'button'; btn.setAttribute('aria-pressed', 'false');
+  btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path class="w" d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="x" d="M16.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Sound off</span>';
+  document.body.appendChild(btn);
+
+  function noise(sec, pink) {
+    const b = ctx.createBuffer(1, Math.round(ctx.sampleRate * sec), ctx.sampleRate), d = b.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < d.length; i++) {
+      const w = rnd() * 2 - 1; if (!pink) { d[i] = w; continue; }
+      b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+      b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+      d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926;
+    }
+    return b;
+  }
+  function build() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const SR = ctx.sampleRate;
+    master = ctx.createGain(); master.gain.value = 0;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = 0.006; comp.release.value = 0.25;
+    master.connect(comp).connect(ctx.destination);
+    const irLen = Math.round(SR * 3.2), ir = ctx.createBuffer(2, irLen, SR);
+    for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); let lp = 0; for (let i = 0; i < irLen; i++) { const tt = i / SR; lp += ((rnd() * 2 - 1) - lp) * (0.25 + 0.6 * Math.exp(-tt * 1.4)); d[i] = lp * Math.exp(-tt * 2.0) * Math.min(1, i / (SR * 0.012)); } }
+    const verb = ctx.createConvolver(); verb.buffer = ir;
+    const vOut = ctx.createGain(); vOut.gain.value = 0.5; verb.connect(vOut).connect(master);
+    const send = (node, amt) => { const g = ctx.createGain(); g.gain.value = amt; node.connect(g).connect(verb); };
+    const white = noise(2.3, false), pinkA = noise(6, true), pinkB = noise(6.37, true);
+    const loop = (b) => { const n = ctx.createBufferSource(); n.buffer = b; n.loop = true; n.start(); return n; };
+    V = makeVoices(ctx, master, send, white, rnd);
+    // wind: two decorrelated pink-noise bands, slowly drifting
+    [[pinkA, -0.6, 0.05], [pinkB, 0.6, 0.037]].forEach(([b, pan, rate]) => {
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.6; bp.frequency.value = 440;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = rate; const lg = ctx.createGain(); lg.gain.value = 220; lfo.connect(lg).connect(bp.frequency); lfo.start();
+      const g = ctx.createGain(); g.gain.value = 0.16; const pn = ctx.createStereoPanner(); pn.pan.value = pan;
+      loop(b).connect(bp).connect(g).connect(pn).connect(master);
+    });
+    // pad: D maj9 -> G maj7 -> B m9 -> D, a chord every 8 s with long crossfades
+    const chords = [[146.83, 220.0, 329.63, 369.99, 440.0], [98.0, 146.83, 246.94, 369.99, 440.0], [123.47, 185.0, 293.66, 369.99, 554.37], [146.83, 220.0, 329.63, 440.0, 659.25]];
+    let ci = 0;
+    const playChord = (t0) => {
+      const notes = chords[ci++ % chords.length];
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1000; lp.Q.value = 0.3;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.04, t0 + 3); g.gain.setValueAtTime(0.04, t0 + 7); g.gain.linearRampToValueAtTime(0, t0 + 10.5);
+      lp.connect(g); g.connect(master); send(g, 0.6);
+      notes.forEach((f, k) => { for (const det of [-5, 5]) {
+        const o = ctx.createOscillator(); o.type = k === 0 ? 'triangle' : 'sawtooth'; o.frequency.value = f; o.detune.value = det + (rnd() - 0.5) * 3;
+        const og = ctx.createGain(); og.gain.value = (k === 0 ? 0.9 : 0.4) / notes.length;
+        const pn = ctx.createStereoPanner(); pn.pan.value = (k / (notes.length - 1) * 2 - 1) * 0.5 * Math.sign(det);
+        o.connect(og).connect(pn).connect(lp); o.start(t0); o.stop(t0 + 10.6);
+      } });
+    };
+    playChord(ctx.currentTime + 0.1);
+    padTimer = setInterval(() => { if (ctx.state === 'running') playChord(ctx.currentTime + 0.05); }, 8000);
+    // slosh bed (level follows the liquid) and whoosh bed (level follows the camera)
+    sloshLP = ctx.createBiquadFilter(); sloshLP.type = 'lowpass'; sloshLP.Q.value = 2; sloshLP.frequency.value = 400;
+    const am = ctx.createGain(); am.gain.value = 0.6; const lfo = ctx.createOscillator(); lfo.frequency.value = 1.35; const lg = ctx.createGain(); lg.gain.value = 0.4; lfo.connect(lg).connect(am.gain); lfo.start();
+    sloshG = ctx.createGain(); sloshG.gain.value = 0;
+    loop(pinkA).connect(sloshLP).connect(am).connect(sloshG).connect(master); send(sloshG, 0.2);
+    whooshBP = ctx.createBiquadFilter(); whooshBP.type = 'bandpass'; whooshBP.Q.value = 1.1; whooshBP.frequency.value = 300;
+    whooshG = ctx.createGain(); whooshG.gain.value = 0;
+    loop(pinkB).connect(whooshBP).connect(whooshG).connect(master); send(whooshG, 0.25);
+  }
+  function setOn(v) {
+    if (v && !ctx) { try { build(); } catch (e) { console.warn('audio unavailable', e); return; } }
+    on = v;
+    if (ctx) { if (v && ctx.state !== 'running') ctx.resume(); master.gain.setTargetAtTime(v ? 0.85 : 0, ctx.currentTime, 0.35); }
+    btn.setAttribute('aria-pressed', String(v)); btn.querySelector('span').textContent = v ? 'Sound on' : 'Sound off';
+  }
+  btn.addEventListener('click', (e) => { e.stopPropagation(); userOff = on; setOn(!on); });
+  renderer.domElement.addEventListener('pointerdown', () => { if (!on && !userOff) setOn(true); });
+  document.addEventListener('visibilitychange', () => { if (!ctx) return; if (document.hidden) ctx.suspend(); else if (on) ctx.resume(); });
+  const spawn0 = bloomer.spawn;
+  bloomer.spawn = (p, n, t) => {
+    if (on && ctx && ctx.state === 'running') {
+      const now = ctx.currentTime;
+      if (now - lastBloom > 0.06 || bloomBurst) {                 // keep fast hovering from turning into noise
+        lastBloom = now;
+        V.bloom(now + Math.max(0, t - U.uTime.value), island.localToWorld(p.clone()).project(camera).x, bloomBurst);
+      }
+    }
+    return spawn0(p, n, t);
+  };
+  return {
+    mossTap(x) { if (on && ctx) V.sparkle(ctx.currentTime, x); },
+    glass() {
+      if (!on || !ctx) return;
+      const t = ctx.currentTime; V.tink(t); V.glugs(t);
+      for (let tt = t + 0.1; tt < t + 1.8; tt += 0.04 + rnd() * 0.1) V.bubble(tt, 0.035 + rnd() * 0.035);
+    },
+    update(dt) {
+      if (!on || !ctx || ctx.state !== 'running') return;
+      const now = ctx.currentTime, sl = SLOSH.v.length();
+      sloshG.gain.setTargetAtTime(Math.min(0.9, sl * 2.4), now, 0.06); sloshLP.frequency.setTargetAtTime(380 + sl * 1100, now, 0.06);
+      const cs = haveCam ? camera.position.distanceTo(prevCam) / Math.max(dt, 1e-3) : 0;
+      prevCam.copy(camera.position); haveCam = true;
+      whooshG.gain.setTargetAtTime(Math.min(0.5, Math.pow(cs / 3.5, 2) * 0.5), now, 0.08); whooshBP.frequency.setTargetAtTime(260 + Math.min(2400, cs * 520), now, 0.08);
+    },
+    get state() { return { on, ctx: ctx ? ctx.state : 'none' }; },
+  };
+})();
 
 buildPlants();
 resize();
-loadHDRI().catch((e) => console.warn('HDRI failed to load, keeping the procedural sky', e));
-loadBottle().then(buildLabel).catch((e) => console.error('bottle failed to load', e)).finally(() => requestAnimationFrame(render));
-window.__dbg = { scene, camera, renderer, controls, island, tone, dof, ao, bloom, composer, skyDome, ToneMappingMode, bloomer, U, SLOSH, bloomAt };
+const hdriReady = loadHDRI().catch((e) => console.warn('HDRI failed to load, keeping the procedural sky', e));
+const ready = loadBottle().then(buildLabel).catch((e) => console.error('bottle failed to load', e));
+if (FILM) Promise.all([ready, hdriReady]).then(() => film.warm()).then(() => { window.__film.state = 'ready'; });
+else ready.finally(() => requestAnimationFrame(render));
+window.__dbg = { scene, camera, renderer, controls, island, tone, dof, ao, bloom, composer, skyDome, ToneMappingMode, bloomer, U, SLOSH, bloomAt, sound };
 </script>
 </body>
 </html>
