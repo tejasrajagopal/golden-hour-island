@@ -3387,6 +3387,8 @@ function frameCamera(initial) {
 frameCamera(true);
 
 const U = { uTime: { value: 0 } };
+// handles the Scene panel tweaks (sky, light, moss, grass, earth, clouds, liquid)
+const SCENE_REFS = {}, MOSS_TINT = { value: new THREE.Color(1, 1, 1) };
 
 /* =====================================================================
    2. Sky dome + image-based lighting
@@ -3483,7 +3485,8 @@ scene.add(sun);
 const key = new THREE.DirectionalLight(0xeef3ff, 1.15);
 key.position.set(-4, 3.5, 7);
 scene.add(key);
-scene.add(new THREE.HemisphereLight(0xbcd2f2, 0x5c4a30, 0.85));
+const hemi = new THREE.HemisphereLight(0xbcd2f2, 0x5c4a30, 0.85);
+scene.add(hemi);
 
 /* =====================================================================
    4. The island: displaced sphere -> mossy top, lumpy earthen underside
@@ -3718,6 +3721,7 @@ function buildBottle(buf) {
   }
   // flat faces stay flat, bevels shade smoothly
   const glass = new THREE.Mesh(toCreasedNormals(parts.container2, THREE.MathUtils.degToRad(35)), bottleGlassMaterial());
+  SCENE_REFS.glass = glass.material;
   bottle.add(glass);
   window.__bottleGlass = glass;
   GLASS.mesh = new THREE.Mesh(glass.geometry, GLASS.mat);
@@ -3904,7 +3908,7 @@ const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), sp = new THREE.Vec
     mesh.setColorAt(k, tmpC); k++;
   }
   mesh.count = k; mesh.castShadow = true; mesh.receiveShadow = true;
-  island.add(mesh);
+  island.add(mesh); SCENE_REFS.mossBlobs = mesh.material;
 }
 
 { // Shell-textured moss: the island skin is drawn LAYERS times, each copy pushed a little further out
@@ -3928,7 +3932,7 @@ const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), sp = new THREE.Vec
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
   mat.customProgramCacheKey = () => 'mossShell' + LAYERS;
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uTime = U.uTime;
+    sh.uniforms.uTime = U.uTime; sh.uniforms.uMossTint = MOSS_TINT;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uTime; attribute float aMask; varying float vLayer; varying vec3 vBase; varying float vMask;
@@ -3942,7 +3946,7 @@ const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), sp = new THREE.Vec
         transformed.xz += wind * 0.005 * layer * layer * aMask;`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying float vLayer; varying vec3 vBase; varying float vMask;
+        varying float vLayer; varying vec3 vBase; varying float vMask; uniform vec3 uMossTint;
         ${NOISE_GLSL}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         vec3 q = mat3(0.80, 0.36, -0.48, -0.20, 0.91, 0.36, 0.56, -0.20, 0.80) * vBase * ${DENSITY.toFixed(1)};
@@ -3962,7 +3966,7 @@ const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), sp = new THREE.Vec
           c = mix(c, c * vec3(1.35, 1.1, 0.6), smoothstep(0.6, 0.85, vn(vBase * 3.5)) * 0.4);    // olive patches
           c *= mix(0.4, 1.0, smoothstep(0.3, 0.62, vn(vBase * 26.0 + 4.0)));                      // dark speckle
           c *= mix(0.6, 1.1, smoothstep(0.2, 0.8, vn(vBase * 4.5 + 3.0)));                       // crests catch more light
-          diffuseColor.rgb = c;
+          diffuseColor.rgb = c * uMossTint;
         }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         normal = normalize(normal + mat3(viewMatrix) * off * 1.4 * tip);`)
@@ -4041,7 +4045,7 @@ function taper(geo, curve, tubular, radial, amount) {
     geos.push(taper(new THREE.TubeGeometry(curve, 14, rr(0.004, 0.012), 4, false), curve, 14, 4, 0.85));
   }
   const roots = new THREE.Mesh(mergeGeometries(geos), new THREE.MeshStandardMaterial({ color: new THREE.Color(0.16, 0.11, 0.07), roughness: 1 }));
-  roots.castShadow = true; island.add(roots);
+  roots.castShadow = true; island.add(roots); SCENE_REFS.roots = roots.material;
 }
 
 /* =====================================================================
@@ -4449,7 +4453,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
         gl_FragColor = vec4(col * a, a);
       }`,
   });
-  const clouds = new THREE.Mesh(geo, mat); clouds.frustumCulled = false; clouds.renderOrder = 5;
+  const clouds = new THREE.Mesh(geo, mat); clouds.frustumCulled = false; clouds.renderOrder = 5; SCENE_REFS.clouds = mat;
   scene.add(clouds);
 }
 const motes = (() => {
@@ -4751,7 +4755,7 @@ const look = FILM ? null : (() => {
     const config = {
       look: { type: 'select', options: Object.keys(LOOKS), default: 'Dreamy' },
       exposure: [D.exposure, -2, 2, 0.01],
-      Dream: { mist: [D.Dream.mist, 0, 1, 0.01], 'mist spread': [D.Dream['mist spread'], 0.3, 1, 0.01], halation: [D.Dream.halation, 0, 1.5, 0.01],
+      Dream: { _collapsed: true, mist: [D.Dream.mist, 0, 1, 0.01], 'mist spread': [D.Dream['mist spread'], 0.3, 1, 0.01], halation: [D.Dream.halation, 0, 1.5, 0.01],
         'halation colour': { type: 'color', default: D.Dream['halation colour'] }, bloom: [D.Dream.bloom, 0, 2, 0.01], 'bloom threshold': [D.Dream['bloom threshold'], 0, 1.5, 0.01] },
       Grade: { temperature: [D.Grade.temperature, -1, 1, 0.01], tint: [D.Grade.tint, -1, 1, 0.01], contrast: [D.Grade.contrast, -1, 1, 0.01],
         saturation: [D.Grade.saturation, 0, 2, 0.01], vibrance: [D.Grade.vibrance, -1, 1, 0.01], shadows: [D.Grade.shadows, -1, 1, 0.01],
@@ -4765,16 +4769,101 @@ const look = FILM ? null : (() => {
         letterbox: { type: 'select', options: ['Off', '2.39 : 1', '1.85 : 1'], default: 'Off' } },
       'export LUT': { type: 'action', label: 'Export .cube LUT' },
     };
-    let lastLook = 'Dreamy';
+    let lastLook = null;
     const kit = createDialKit('Film look', config, {
       id: 'golden-hour-look', persist: true,
       onAction: (path) => { if (path === 'export LUT') cube(); },
     });
+    lastLook = kit.getValues().look;          // a saved look keeps its saved tweaks on reload
     kit.subscribe((v) => {
       if (v.look !== lastLook) { lastLook = v.look; if (LOOKS[v.look]) { kit.setValues(LOOKS[v.look]); return; } }
       apply(v);
     });
     window.__dbg.kit = kit;
+
+    // ---- Scene panel: the world itself (sky, light, moss and grass, earth, clouds, liquid) ----
+    const SKIES = {
+      'Golden hour': {
+        Sky: { top: '#5b84c6', middle: '#87a8dc', horizon: '#b9cce8', 'sun glow': '#ffeac4', 'glow strength': 1, 'haze colour': '#adc3e3' },
+        Light: { 'sun colour': '#ffdcb0', sun: 3.8, fill: 1.15, 'ambient sky': '#bcd2f2', 'ambient ground': '#5c4a30', ambient: 0.85 },
+        Clouds: { lit: '#fff8ee', shade: '#b4c2dc', distance: '#b9cce8' } },
+      'Cotton candy': {
+        Sky: { top: '#7486d0', middle: '#b9a4dc', horizon: '#f6c4c4', 'sun glow': '#ffd2b0', 'glow strength': 1.2, 'haze colour': '#e6c6d8' },
+        Light: { 'sun colour': '#ffc9a8', sun: 3.4, fill: 1.25, 'ambient sky': '#d6c4ec', 'ambient ground': '#6a4a44', ambient: 0.95 },
+        Clouds: { lit: '#fff1f3', shade: '#c4b2d8', distance: '#efcadb' } },
+      'Sunset blaze': {
+        Sky: { top: '#3a5896', middle: '#c98c86', horizon: '#ffb47a', 'sun glow': '#ffb066', 'glow strength': 1.6, 'haze colour': '#eab494' },
+        Light: { 'sun colour': '#ffad6a', sun: 4.4, fill: 0.8, 'ambient sky': '#c8a8b8', 'ambient ground': '#5a3a26', ambient: 0.75 },
+        Clouds: { lit: '#ffe2c4', shade: '#a68ca8', distance: '#efb896' } },
+      'Blue hour': {
+        Sky: { top: '#1d3674', middle: '#3c5ca6', horizon: '#8aa1d0', 'sun glow': '#ffbe92', 'glow strength': 0.6, 'haze colour': '#7f95c4' },
+        Light: { 'sun colour': '#ffc49a', sun: 2.2, fill: 1.1, 'ambient sky': '#8ea6dc', 'ambient ground': '#3a3448', ambient: 0.9 },
+        Clouds: { lit: '#d8e2f6', shade: '#6c7eac', distance: '#8aa1d0' } },
+      'Clear noon': {
+        Sky: { top: '#3c76d8', middle: '#70a0ea', horizon: '#bcd6f4', 'sun glow': '#fff6e2', 'glow strength': 0.6, 'haze colour': '#bcd2ee' },
+        Light: { 'sun colour': '#fff1de', sun: 4.6, fill: 1.0, 'ambient sky': '#c4daf6', 'ambient ground': '#5c5034', ambient: 0.9 },
+        Clouds: { lit: '#ffffff', shade: '#c2cfe4', distance: '#c4d6ee' } },
+    };
+    const S0 = SKIES['Golden hour'];
+    const GROUND0 = { 'Moss & grass': { 'moss lightness': 1, 'moss tint': '#ffffff', 'grass lightness': 1, 'grass tint': '#ffffff' },
+      Earth: { lightness: 1, tint: '#ffffff' }, Bottle: { liquid: '#ffa82e' } };
+    const col = (c) => c ? { type: 'color', default: c } : null;
+    const folder = (o, ranges, collapsed) => {
+      const f = collapsed ? { _collapsed: true } : {};
+      for (const k in o) f[k] = typeof o[k] === 'string' ? col(o[k]) : [o[k], ...ranges[k]];
+      return f;
+    };
+    const sceneConfig = {
+      sky: { type: 'select', options: Object.keys(SKIES), default: 'Golden hour' },
+      Sky: folder(S0.Sky, { 'glow strength': [0, 3, 0.01] }),
+      'Moss & grass': folder(GROUND0['Moss & grass'], { 'moss lightness': [0.2, 3, 0.01], 'grass lightness': [0.2, 3, 0.01] }),
+      Light: folder(S0.Light, { sun: [0, 8, 0.05], fill: [0, 3, 0.01], ambient: [0, 2.5, 0.01] }, true),
+      Clouds: folder(S0.Clouds, {}, true),
+      Earth: folder(GROUND0.Earth, { lightness: [0.2, 3, 0.01] }, true),
+      Bottle: folder(GROUND0.Bottle, {}, true),
+      'reset scene': { type: 'action', label: 'Reset scene' },
+    };
+    // panel colours are sRGB strings; three stores linear, so convert on the way in
+    const setC = (c, s, k = 1) => c.setRGB(...srgb(s), THREE.SRGBColorSpace).multiplyScalar(k);
+    const R = SCENE_REFS;
+    const glass0 = { col: R.glass.color.clone(), emi: R.glass.emissive.clone() };
+    function applyScene(v) {
+      const su = skyMat.uniforms, Sk = v.Sky, L = v.Light, C = v.Clouds, G = v['Moss & grass'];
+      setC(su.uTop.value, Sk.top); setC(su.uMid.value, Sk.middle); setC(su.uHor.value, Sk.horizon);
+      setC(su.uSunCol.value, Sk['sun glow'], Sk['glow strength']);
+      if (scene.fog) setC(scene.fog.color, Sk['haze colour']);
+      setC(sun.color, L['sun colour']); sun.intensity = L.sun; key.intensity = L.fill;
+      setC(hemi.color, L['ambient sky']); setC(hemi.groundColor, L['ambient ground']); hemi.intensity = L.ambient;
+      const cu = R.clouds.uniforms;
+      setC(cu.uLit.value, C.lit, 1.1); setC(cu.uShade.value, C.shade); setC(cu.uHaze.value, C.distance);
+      setC(MOSS_TINT.value, G['moss tint'], G['moss lightness']); setC(R.mossBlobs.color, G['moss tint'], G['moss lightness']);
+      setC(bladeMat.color, G['grass tint'], G['grass lightness']);
+      setC(islandMesh.material.color, v.Earth.tint, v.Earth.lightness); setC(R.roots.color, v.Earth.tint, v.Earth.lightness);
+      R.roots.color.multiply(new THREE.Color(0.16, 0.11, 0.07));       // the roots' own brown, times the earth tweak
+      // liquid: absorption colour drives the amber; the faint body tint and glow follow its hue
+      const liq = setC(new THREE.Color(), v.Bottle.liquid), base = new THREE.Color('#ffa82e');
+      R.glass.attenuationColor.copy(liq);
+      const ratio = (a, b) => new THREE.Color(a.r / Math.max(b.r, 1e-3), a.g / Math.max(b.g, 1e-3), a.b / Math.max(b.b, 1e-3));
+      const k2 = ratio(liq, base); const clamp1 = (c) => c.setRGB(Math.min(c.r, 1.5), Math.min(c.g, 1.5), Math.min(c.b, 1.5));
+      R.glass.color.copy(glass0.col).multiply(clamp1(k2.clone())); R.glass.emissive.copy(glass0.emi).multiply(clamp1(k2));
+      cssSky(Sk);
+    }
+    // the loading screen and page background follow the sky too
+    function cssSky(Sk) {
+      const st = document.documentElement.style;
+      st.setProperty('--sky-top', Sk.top); st.setProperty('--sky-bottom', Sk.horizon); st.setProperty('--bg', Sk.middle);
+    }
+    let lastSky = null;
+    const sceneKit = createDialKit('Scene', sceneConfig, {
+      id: 'golden-hour-scene', persist: true,
+      onAction: (path) => { if (path === 'reset scene') { lastSky = 'Golden hour'; sceneKit.setValues({ sky: 'Golden hour', ...S0, ...GROUND0 }); } },
+    });
+    lastSky = sceneKit.getValues().sky;      // a saved preset keeps its saved tweaks on reload
+    sceneKit.subscribe((v) => {
+      if (v.sky !== lastSky) { lastSky = v.sky; if (SKIES[v.sky]) { sceneKit.setValues(SKIES[v.sky]); return; } }
+      applyScene(v);
+    });
+    window.__dbg.sceneKit = sceneKit;
   }).catch((e) => console.warn('DialKit panel unavailable:', e));
 
   return { ca, dream, film, apply, tick, cube, get values() { return cur; } };

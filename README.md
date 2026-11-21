@@ -13,7 +13,18 @@ Plain [three.js](https://threejs.org) r170 in a single `index.html` — no build
 - **Lens:** chromatic aberration, vignette, bokeh size, atmospheric haze
 - **Film:** grain amount and size, flicker, gate weave, light leaks, letterbox (2.39:1 or 1.85:1)
 
-Your settings are saved in the browser. **Save version** keeps snapshots to compare; **Copy parameters** copies the values; **Export .cube LUT** downloads the colour grade for Resolve, Premiere or After Effects.
+**Scene panel** (below it): change the world itself. Start from a sky (Golden hour, Cotton candy, Sunset blaze, Blue hour, Clear noon), then adjust:
+
+- **Sky:** top, middle and horizon colours, sun glow colour and strength, haze colour
+- **Moss & grass:** lightness and tint for the moss carpet and the grass blades
+- **Light:** sun colour and strength, fill light, ambient sky and ground colours
+- **Clouds:** lit, shaded and distant colours
+- **Earth:** lightness and tint of the soil and roots
+- **Bottle:** liquid colour
+
+**Reset scene** puts everything back to Golden hour.
+
+Both panels save your settings in the browser. **Save version** keeps snapshots to compare; **Copy parameters** copies the values; **Export .cube LUT** downloads the colour grade for Resolve, Premiere or After Effects.
 
 ## Run locally
 
