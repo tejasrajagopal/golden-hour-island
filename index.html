@@ -366,7 +366,7 @@ function topAt(x, z) {
 const onTop = (x, z, sink = 0.02) => V3(x, topAt(x, z) - sink, z);
 
 /* =====================================================================
-   5. Bottle: stacked transmissive glass blocks, label, stone-black cap
+   5. Bottle: your C4D glass (two-sided refraction + liquid), SVG sticker label, stone-black cap
    ===================================================================== */
 const B = { W: 1.0, H: 1.452, D: 0.495 };          // your C4D bottle, normalised to 1 unit wide (see tools/convert_bottle.py)
 const FOOT = { x: B.W / 2 + 0.04, z: B.D / 2 + 0.04 };
@@ -793,6 +793,9 @@ const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), sp = new THREE.Vec
   };
   const shells = new THREE.InstancedMesh(g, mat, LAYERS);
   shells.frustumCulled = false; shells.receiveShadow = true;
+  // three's transmission pass renders into a mip-mapped target; there the moss is only seen through the
+  // glass, so a few layers are enough. The main pass gets the full stack.
+  shells.onBeforeRender = (r) => { const rt = r.getRenderTarget(); shells.count = rt && rt.texture && rt.texture.generateMipmaps ? 6 : LAYERS; };
   island.add(shells);
 }
 
@@ -929,6 +932,36 @@ function addFlower(x, z, height, lean, opts) {
   }
   return piv;
 }
+// Merge each plant (it sways on one pivot) into one mesh per material: same look, far fewer draw calls.
+function mergePlants() {
+  const inv = new THREE.Matrix4(), rel = new THREE.Matrix4();
+  let before = 0, after = 0;
+  for (const s of swayers) {
+    const piv = s.o; piv.updateMatrixWorld(true); inv.copy(piv.matrixWorld).invert();
+    const groups = new Map();
+    piv.traverse((m) => {
+      if (!m.isMesh || m.isInstancedMesh) return;
+      before++;
+      const mat = m.material;
+      const key = [mat.type, mat.customProgramCacheKey(), mat.color ? mat.color.getHexString() : '', mat.emissive ? mat.emissive.getHexString() : '', mat.side, mat.roughness].join('|');
+      if (!groups.has(key)) groups.set(key, { mat, meshes: [], cast: false });
+      const gr = groups.get(key); gr.meshes.push(m); gr.cast = gr.cast || m.castShadow;
+    });
+    for (const gr of groups.values()) {
+      after++;
+      if (gr.meshes.length < 2) continue;
+      const geos = gr.meshes.map((m) => { rel.multiplyMatrices(inv, m.matrixWorld); const g = m.geometry.clone().applyMatrix4(rel); return g.index ? g.toNonIndexed() : g; });
+      const names = Object.keys(geos[0].attributes).filter((n) => geos.every((g) => g.attributes[n]));
+      geos.forEach((g) => Object.keys(g.attributes).forEach((n) => { if (!names.includes(n)) g.deleteAttribute(n); }));
+      const merged = mergeGeometries(geos);
+      if (!merged) { after += gr.meshes.length - 1; continue; }
+      const mesh = new THREE.Mesh(merged, gr.mat); mesh.castShadow = gr.cast; mesh.receiveShadow = true;
+      gr.meshes.forEach((m) => m.parent.remove(m));
+      piv.add(mesh);
+    }
+  }
+  return { before, after };
+}
 const spikeGeo = (() => { // dried seed head: a spiky ball
   const parts = [new THREE.IcosahedronGeometry(0.045, 2)];
   for (let i = 0; i < 46; i++) {
@@ -1060,7 +1093,8 @@ const bloomer = (() => {
   for (const m of [petals, centers, stems]) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); island.add(m); }
 
   const F = [], live = [];
-  let next = 0;
+  let next = 0, used = 0;
+  petals.count = 0; centers.count = 0; stems.count = 0;     // draw only the slots that have bloomed
   const PALETTES = [
     { w: 0.62, petals: 5, col: ['#fbf8f1', '#f6efe2', '#fffaf2'], ctr: '#d8b13a', len: [0.05, 0.075], wid: [0.55, 0.7] },   // small moss stars
     { w: 0.22, petals: 8, col: ['#f2e7d6', '#f6ead9'], ctr: '#d9a62a', len: [0.09, 0.13], wid: [0.42, 0.52] },              // cream cosmos
@@ -1074,6 +1108,7 @@ const bloomer = (() => {
 
   function spawn(pos, normal, t) {
     const i = next; next = (next + 1) % MAXF;
+    if (i + 1 > used) { used = i + 1; petals.count = used * MAXP; centers.count = used; stems.count = used; }
     let r = rand(), pal = PALETTES[0];
     for (const p of PALETTES) { if (r < p.w) { pal = p; break; } r -= p.w; }
     const up = normal.clone().lerp(UP, 0.55).normalize();
@@ -1896,12 +1931,13 @@ const sound = (() => {
 })();
 
 buildPlants();
+const plantMerge = mergePlants();
 resize();
 const hdriReady = loadHDRI().catch((e) => console.warn('HDRI failed to load, keeping the procedural sky', e));
 const ready = loadBottle().then(buildLabel).catch((e) => console.error('bottle failed to load', e));
 if (FILM) Promise.all([ready, hdriReady]).then(() => film.warm()).then(() => { window.__film.state = 'ready'; });
 else ready.finally(() => requestAnimationFrame(render));
-window.__dbg = { scene, camera, renderer, controls, island, tone, dof, ao, bloom, composer, skyDome, ToneMappingMode, bloomer, U, SLOSH, bloomAt, sound };
+window.__dbg = { scene, camera, renderer, controls, island, tone, dof, ao, bloom, composer, skyDome, ToneMappingMode, bloomer, U, SLOSH, bloomAt, sound, plantMerge };
 </script>
 </body>
 </html>
