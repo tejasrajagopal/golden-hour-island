@@ -31,6 +31,7 @@ URL options: `?sky=hdri` shows the HDRI as the backdrop · `?glassdebug` shows t
 | Label | Your SVG, rasterised at 4×, on a sticker material: printed matte layer, edge bevel and grain normals, glossy clear-coat laminate |
 | Moss | Shell texturing (stacked layers cut into strands) with hummocks, speckle and wind |
 | Flowers | Procedural petals (cupped, curled, veined, translucent) with golden-angle centres; bloom on hover |
+| Butterflies | Six procedural butterflies (cabbage white, orange tip, common blue) with canvas-painted wings, translucent when backlit, flapping in bursts and gliding around the island |
 | Lighting | HDRI + strip softboxes for reflections, PCSS soft shadows, translucency on plants |
 | Post | N8AO ambient occlusion, depth of field, bloom, neutral tone mapping |
 | Film look | Before tone mapping: mipmap-blur Pro-Mist diffusion and halation. After it: a colour grade (white balance, S-curve, split toning, vibrance, matte fade) with a CPU twin for `.cube` export, light leaks, 24 fps flicker and grain, vignette, letterbox, chromatic aberration, CSS gate weave |
