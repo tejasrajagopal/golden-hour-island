@@ -7,6 +7,8 @@ Plain [three.js](https://threejs.org) r170 in a single `index.html` — no build
 
 **Look:** a dreamy film look over a bright blue sky. Pro-Mist diffusion and halation, a soft grade with split toning, blue light leaks, film grain, flicker and gate weave, atmospheric haze, and lush moss and grass under cool blue light. All values live in `LOOK` and `SCENE` in `index.html`; `window.__dbg.look.cube()` exports the colour grade as a .cube LUT.
 
+**Intro:** a blue Golden Hour title card, revealed by a shutter transition ([Osmo Supply](https://www.osmo.supply) Shutter Page Transition, GSAP) once the scene has drawn.
+
 **Sound:** subtle and untuned, no music. Quiet wind, soft petal and stem sounds when flowers bloom, a soft press on the moss, a gentle glass tap with liquid and bubbles at the bottle, and air that follows the camera. It starts on the first click or tap; the button at the top right turns it off.
 
 ## Run locally
@@ -50,6 +52,7 @@ URL options: `?sky=hdri` shows the HDRI as the backdrop · `?glassdebug` shows t
 - [three.js](https://github.com/mrdoob/three.js) (MIT), including the `Sky` (Preetham) and `RGBELoader` addons
 - [pmndrs/postprocessing](https://github.com/pmndrs/postprocessing) (Zlib)
 - [N8AO](https://github.com/N8python/n8ao) (ISC)
+- [GSAP](https://gsap.com) for the intro transition
 - HDRI: [kloppenheim_07_puresky](https://polyhaven.com/a/kloppenheim_07_puresky) from Poly Haven (CC0)
 - Fonts: Inter via Google Fonts (OFL)
 - Bottle model and label artwork supplied by the project owner
